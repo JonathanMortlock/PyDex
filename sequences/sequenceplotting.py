@@ -16,35 +16,38 @@ try:
     from PyQt4.QtGui import QApplication
 except ImportError:
     from PyQt5.QtWidgets import QApplication
-
+import pandas as pd
 import time
+# Plot settings
 font = {'family' : 'normal',
-        'size'   : 12}
-
+        'size'   : 12} 
 plt.rcParams.update({'font.size':6})
 
-
+# PyDex module 
 t = translate()
-t0 = time.time()
 t.load_xml('sequences\\SequenceFiles\\BECSequence_200302.xml')
-# t.load_xml(r"C:\Users\Jonathan\Documents\PhD\Experiment\PyDexData\41K Molasses_200310.xml")
-t1 = time.time()
-t.seq_dic['Routine name in'] = "My new routine"
-t.seq_dic['Routine description in'] = "An example of editing sequences"
+t.load_xml(r"C:\Users\Jonathan\Documents\PhD\Experiment\PyDexData\41K Molasses_200310.xml")
+esc = t.seq_dic['Experimental sequence cluster in'] # Sequence cluster (data)
 
-esc = t.seq_dic['Experimental sequence cluster in']
 timebase = [0] # This list will store the time stamps of each sequence
-totaltime = 0
+totaltime = 0 
 
 ### Range of data to Plot
-steprange = range(10,30) # time step range NB this is the range [start,stop)
+steprange = range(0,30) # time step range NB this is the range [start,stop)
 fastanalouges = [1,2] # fast analouges to plot
 slowanalouges = [8,9,14] # slow analouges to plot
+
+fastanalouges = []
+slowanalouges = [1,3,5,7,8] # slow analouges to plot
+
 
 ### Figure set up ###
 SequenceFig , axes = plt.subplots(len(fastanalouges)+len(slowanalouges),1,sharex=True)
 axes[-1].set_xlabel('Time/ms') # Set label on bottom plot
 color=iter(cm.tab20(np.linspace(0,1,10))) # An iterable of colors 
+### Data frame ###
+df = pd.DataFrame()
+
 
 ### Time Base ###
 for i in steprange[0:-1]: #Because the last timestep values aren't used
@@ -63,6 +66,7 @@ for i in steprange[0:-1]: #Because the last timestep values aren't used
         timebase.append(totaltime)
         timebase.append(totaltime)
 
+df['time-ms'] = timebase
 
 ## Fast Anlouges ###
 j = 0
@@ -90,10 +94,13 @@ for channel in fastanalouges:
     
     print(len(timebase),len(voltages))
     print(timebase,voltages)
+    channelname = esc['Fast analogue names']['Name'][channel]
 
     axes[j].plot(timebase,voltages,color = c)
-    axes[j].set_ylabel(esc['Fast analogue names']['Name'][channel])
+    axes[j].set_ylabel(channelname)
+    axes[j].set_xlim(10000,10300)
     # print(esc['Fast analogue names'].keys())
+    df[channelname] = voltages
     j += 1
 
 for channel in slowanalouges:
@@ -120,11 +127,19 @@ for channel in slowanalouges:
     
     print(len(timebase),len(voltages))
     print(timebase,voltages)
+    channelname = esc['Slow analogue names']['Name'][channel]
 
     axes[j].plot(timebase,voltages,color = c)
-    axes[j].set_ylabel(esc['Slow analogue names']['Name'][channel])
-    # print(esc['Slow analogue names'].keys())
-    j += 1
+    axes[j].set_ylabel(channelname)
+    axes[j].set_xlim(10000,10300)
 
+    # print(esc['Slow analogue names'].keys())
+    j += 1 #plot incrementer
+    df["SAO "+str(channel)+" "+channelname] = voltages
 # plt.plot(esc['Fast analogue array'][2]['Voltage'])
+print(df.head())
+
+df.to_csv("Ksequence.csv")
 plt.show()
+
+
