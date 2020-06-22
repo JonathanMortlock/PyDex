@@ -1,5 +1,5 @@
 n=275
-config_file=Z:/Tweezer/Code/Python 3.5/PyDex/monitor/daqconfig.dat
+config_file=Z:/Tweezer/Code/Python 3.5/PyDex/monitor/testing150620.dat
 trace_file=DAQtrace0.csv
 graph_file=DAQgraph.csv
 save_dir=Z:\Tweezer\Experimental Results\2020\June\18\Measure0
