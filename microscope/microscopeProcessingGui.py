@@ -13,7 +13,7 @@ import pyqtgraph as pg    # not as flexible as matplotlib but works a lot better
 sys.path.append('.')
 sys.path.append('..')
 import microscope.AtomImaging as ai
-
+import imageanalysis.imageHandler as ih
 from matplotlib.figure import Figure
 from skimage import restoration, util, filters
 from PyQt5.QtGui import *
@@ -151,6 +151,8 @@ class main_window(QMainWindow):
                 im_handler=None, hist_handler=None, edit_ROI=False):
         super().__init__()
         self.name = name  # name is displayed in the window title
+        self.image_handler = im_handler if im_handler else ih.image_handler() 
+        
         self.multirun = ''
         self.date = time.strftime("%d %b %B %Y", time.localtime()).split(" ") # day short_month long_month year
         self.log_file_name = results_path + 'log.dat' # in case init_log fails
@@ -159,9 +161,12 @@ class main_window(QMainWindow):
         self.image_storage_path = im_store_path # used for loading image files
         #TODO wrap this in a "testing"
         self.image_path  = r"C:\Users\Jonathan\Documents\PhD\Experiment\MicroscopeAnalysis\AtomTestImages\MIwithsparse2data.npy"
-        self.current_image = np.load(self.image_path)
-        self.truthlist = np.load(self.image_path[:-8]+"truthandlattice.npy")
-        self.lattice_image = np.load(self.image_path)
+        self.current_image = np.zeros((512,512))
+        self.lattice_image = np.ones((512,512))
+        self.event_im.connect(partial(self.storeData,'current_image'))
+        self.event_im.connect(partial(self.storeData,'lattice_image'))
+        # self.truthlist = np.load(self.image_path[:-8]+"truthandlattice.npy")
+       
 
         self.threadpool = QThreadPool()
 
@@ -187,7 +192,7 @@ class main_window(QMainWindow):
         self.updated = {'current_image': False,'blobs': False,'lattice_vectors': False,'lattice': False, 'deconvolved': False,'histogram': False}
         self.init_UI(edit_ROI)
         self.set_im_show(True)
-        self.event_im.emit(self.current_image,True)
+        # self.event_im.emit(self.current_image,True)
     def init_log(self, results_path='.'):
         """Create a directory for today's date as a subdirectory in the log file path
         then write the header to the log file path defined in config.dat"""
@@ -380,7 +385,7 @@ class main_window(QMainWindow):
         histogram_grid.addWidget(threshold_label,3,0)
         histogram_grid.addWidget(self.threshold_edit,3,1)
 
-                ### Settings Tab
+        ### Settings Tab
 
         image_settings_tab = QWidget()
         image_settings_grid = QGridLayout()
@@ -494,6 +499,13 @@ class main_window(QMainWindow):
         im_widget = pg.GraphicsLayoutWidget() # containing widget
         viewbox = im_widget.addViewBox() # plot area to display image
         self.im_canvas = pg.ImageItem() # the image
+        # # Set colormap for pg plot
+        # colormap = matplotlib.cm.get_cmap("inferno")  # cm.get_cmap("CMRmap")
+        # colormap._init()
+        # lut = (colormap._lut * 255).view(np.ndarray)  # Convert matplotlib colormap from 0-1 to 0 -255 for Qt
+        # # Apply the colormap
+        # self.im_canvas.setLookupTable(lut)
+
         viewbox.addItem(self.im_canvas)
         im_grid.addWidget(im_widget, 1,im_grid_pos, 6,8)
         # make an ROI that the user can drag
@@ -521,16 +533,27 @@ class main_window(QMainWindow):
         self.vmax_edit.setValidator(int_validator) # only integers
 
 
+        ### Result Tab ##
+        result_tab = QWidget()
+        result_layout = QGridLayout()
+        result_tab.setLayout(result_layout)
 
-        ### Dashboard Tab ###
-        dash_tab = QWidget()
-        dash_grid = QGridLayout()
-        dash_tab.setLayout(dash_grid)       
-        self.tabs.addTab(dash_tab,"Dashboard")
+        self.result_canvas = MplCanvas()
+        result_toolbar = NavigationToolbar(self.result_canvas,self)
+
+        result_layout.addWidget(result_toolbar,0,0)
+        result_layout.addWidget(self.result_canvas,1,0)
         
-        # dash_grid.addWidget(self.blobcanvas,0,0)
-        # dash_grid.addWidget(self.deconvolved_canvas,0,1)
-        # dash_grid.addWidget(self.histogram_canvas,1,0)
+        self.tabs.addTab(result_tab,"Result")
+        ### Dashboard Tab TBI ###
+        # dash_tab = QWidget()
+        # dash_grid = QGridLayout()
+        # dash_tab.setLayout(dash_grid)       
+        # self.tabs.addTab(dash_tab,"Dashboard")
+        
+        # # dash_grid.addWidget(self.blobcanvas,0,0)
+        # # dash_grid.addWidget(self.deconvolved_canvas,0,1)
+        # # dash_grid.addWidget(self.histogram_canvas,1,0)
 
 
         """
@@ -539,13 +562,6 @@ class main_window(QMainWindow):
 
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("Hi, welcome to the microscope gui")
-
-        # # Setup a timer to trigger the show_deconvolved by calling update_plot.
-        # self.timer = QTimer()
-        # self.timer.setInterval(100)
-        # self.timer.timeout.connect(self.find_deconvolved())
-        # self.timer.start()        
-
 
         self.setGeometry(100, 150, 850, 500)
         self.setWindowTitle(self.name+'Microscope Imaging')
@@ -615,7 +631,7 @@ class main_window(QMainWindow):
             self.status_bar.showMessage("WARNING: path doesn't end in data.npy!")
             self.status_bar.repaint()
     def CCD_stat_edit(self, emg=1, pag=4.5, Nr=8.8, acq_change=False):
-        #TODO implement CCD loggging   
+        #TODO implement CCD logging   
         """Update the values used for the EMCCD bias offset and readout noise"""
         # if self.bias_offset_edit.text(): # check the label isn't empty
         #     self.image_handler.bias = int(self.bias_offset_edit.text())
@@ -795,8 +811,8 @@ class main_window(QMainWindow):
         self.result_canvas.axes.imshow(self.current_image)
         self.result_canvas.axes.scatter(self.lattice[:,0],self.lattice[:,1],s = 2,c = self.atoms,cmap = "Reds")
 
-        if self.auto_checkbox.isChecked():
-            self.find_fidelity()
+        # if self.auto_checkbox.isChecked():
+        #     self.find_fidelity()
     
 
    

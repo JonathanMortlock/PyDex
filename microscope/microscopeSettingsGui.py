@@ -66,7 +66,7 @@ class settings_window(QMainWindow):
         self.mw = [main_window(results_path, im_store_path, 
             'ROI' + str(i//self._m) + '.Im' + str(i%self._m) + '.') for i in range(self._a)] # saia instances
         self.mw_inds = [i%self._m for i in range(self._a)] # the index of the image in the sequence to use 
-
+        self.rw = []
         ### NB re-analysis windows not implemented...
         
         self.rois = []  # list to hold ROI objects
@@ -300,7 +300,7 @@ class settings_window(QMainWindow):
         roi_grid.addWidget(button, 11,i+1, 1,1)
 
         #### choose main window position and dimensions: (xpos,ypos,width,height)
-        self.setWindowTitle('- Settings for Single Atom Image Analysers -')
+        self.setWindowTitle('- Settings for Microscope processing')
         self.setWindowIcon(QIcon('docs/tempicon.png'))
         
 
@@ -345,7 +345,7 @@ class settings_window(QMainWindow):
         if self.bias_offset_edit.text(): # check the label isn't empty
             self.stats['bias'] = int(self.bias_offset_edit.text())
             self.bias_changed.emit(int(self.bias_offset_edit.text()))
-        for mw in self.mw + self.rw:
+        for mw in self.mw:# +self.rw 
             mw.bias_offset_edit.setText(str(self.stats['bias']))
             mw.CCD_stat_edit(emg, pag, Nr, acq_change)
     
@@ -377,7 +377,28 @@ class settings_window(QMainWindow):
             #     self.cam_pic_size_changed(pic_width, pic_height) # reset image shape
             #     self.update_im(np.arange(pic_width*pic_height).reshape((pic_width, pic_height))+self.stats['bias'])
             #     logger.error("Settings window failed to load image file: "+fname+'\n'+str(e))
-    
+    def get_default_path(self, default_path=''):
+        """Get a default path for saving/loading images
+        default_path: set the default path if the function doesn't find one."""
+        return default_path if default_path else os.path.dirname(self.last_path)
+
+    def try_browse(self, title='Select a File', file_type='all (*)', 
+                open_func=QFileDialog.getOpenFileName, defaultpath=''):
+        """Open a file dialog and retrieve a file name from the browser.
+        title: String to display at the top of the file browser window
+        default_path: directory to open first
+        file_type: types of files that can be selected
+        open_func: the function to use to open the file browser"""
+        default_path = self.get_default_path(defaultpath)
+        try:
+            if 'PyQt4' in sys.modules:
+                file_name = open_func(self, title, default_path, file_type)
+            elif 'PyQt5' in sys.modules:
+                file_name, _ = open_func(self, title, default_path, file_type)
+            if type(file_name) == str: self.last_path = file_name 
+            return file_name
+        except OSError: return '' # probably user cancelled
+
     def cam_pic_size_changed(self, width, height):
         """Take the new image dimensions from the camera."""
         self.pic_width_edit.setText(str(width)) # triggers pic_size_text_edit
@@ -546,7 +567,7 @@ class settings_window(QMainWindow):
     
     def end_multirun(self, *args, **kwargs):
         """Reconnect analyser event_im signals and display the empty histogram."""
-        for mw in self.rw + self.mw:
+        for mw in self.mw:
             # reconnect previous signals
             mw.set_bins() # reconnects signal with given histogram binning settings
             mw.display_fit() # display the empty histograms
@@ -560,7 +581,7 @@ class settings_window(QMainWindow):
         var            -- the user variable associated with this histogram
         hist_id        -- unique ID for histogram"""#TODO update to microscope
         # get best fit on histograms, doing reimage last since their fits depend on the main hists
-        for mw in self.mw[:self._a] + self.rw[:len(self.rw_inds)]: 
+        for mw in self.mw[:self._a]: 
             mw.var_edit.setText(var) # also updates histo_handler temp vals
             mw.set_user_var() # just in case not triggered by the signal
             mw.bins_text_edit(text='reset') # set histogram bins 
@@ -589,7 +610,7 @@ class settings_window(QMainWindow):
         measure_prefix -- label identifying this multirun, a folder with this
             name is created within results_path
         appending      -- whether to append results to the varplot"""
-        for mw in self.mw[:self._a] + self.rw[:len(self.rw_inds)]:
+        for mw in self.mw[:self._a]:
             #Commented out by JM
             # mw.image_handler.reset_arrays() # gets rid of old data
             # mw.histo_handler.bf = None
@@ -621,7 +642,7 @@ class settings_window(QMainWindow):
             a = int(self.a_edit.text()) * (up+1) # user chooses number ROIs not analysers
             self.stats['num_images'] = up + 1
             self.stats['num_saia'] = a
-            self.stats['num_reim'] = int(self.reim_edit.text())
+            # self.stats['num_reim'] = int(self.reim_edit.text()) #Reim comment out
             if up < 10: # defines which image index is allowed
                 regstr = '[0-%s]'%up
             elif up < 100: 
@@ -657,7 +678,28 @@ class settings_window(QMainWindow):
                 mw.pic_width_edit.setText(width)
                 mw.pic_height_edit.setText(height)
                 mw.pic_size_label.setText('('+width+', '+height+')')
-
+    def show_analyses(self, show_all=True):
+        #TODO understand this
+        """Display the instances of SAIA, displaced from the left of the screen.
+        show_all -- True: if main window is used for reimage, don't display.
+                   False: display all main windows and reimage windows."""
+        try:
+            mwx, mwy, rwx, rwy, w, h = self.stats['window_pos']
+        except ValueError: mwx, mwy, rwx, rwy, w, h = 600, 50, 10, 200, 600, 400
+        # if not show_all:
+        #     hide = []
+        # else: hide = [int(ind) for pair in self.rw_inds for ind in pair.split(',')]
+        for i in range(self._a):
+            # if i in hide:
+            #     self.mw[i].close()
+            # else:
+            self.mw[i].resize(w, h)
+            self.mw[i].setGeometry(mwx+i*2*w//self._a, mwy, w, h)
+            self.mw[i].show()
+        # for i in range(len(self.rw_inds)):
+        #     self.rw[i].resize(w, h)
+        #     self.rw[i].setGeometry(rwx+i*2*w//len(self.rw_inds), rwy, w, h)
+        #     self.rw[i].show()
 def run():
     """Initiate an app to run the program
     if running in Pylab/IPython then there may already be an app instance"""
