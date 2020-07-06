@@ -19,12 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class image_handler(Analysis):
-    """Analyse individual image files and create a histogram.
-    
-    Load an ROI image centred on the atom, integrate the counts,
-    then compare to the threshold.
-    Inherits the types and stats dictionaries, and reset_arrays, 
-    load, and save methods from Analysis."""
+    """Placeholder based on Tweezer version."""
     def __init__(self):
         super().__init__()
         self.types = OrderedDict([('File ID', int), # number ID of image

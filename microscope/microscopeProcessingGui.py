@@ -22,15 +22,6 @@ from PyQt5.QtCore import *
 from functools import  partial
 import time
 import traceback, sys
-#TODO database support
-# from pymongo import MongoClient, DESCENDING
-
-# from bson.binary import Binary
-# from bson.objectid import ObjectId
-
-# client = MongoClient('localhost',27017)
-# db = client.AtomAnalysis
-# imgs = db.images1
 
 # validators for user input
 double_validator = QDoubleValidator() # floats
@@ -150,7 +141,7 @@ class main_window(QMainWindow):
     def __init__(self,results_path='.', im_store_path='.', name='',
                 im_handler=None, hist_handler=None, edit_ROI=False):
         super().__init__()
-        self.name = name  # name is displayed in the window title
+        self.name = name  # name is displayed in  the window title
         self.image_handler = im_handler if im_handler else ih.image_handler() 
         
         self.multirun = ''
@@ -163,8 +154,11 @@ class main_window(QMainWindow):
         self.image_path  = r"C:\Users\Jonathan\Documents\PhD\Experiment\MicroscopeAnalysis\AtomTestImages\MIwithsparse2data.npy"
         self.current_image = np.zeros((512,512))
         self.lattice_image = np.ones((512,512))
-        self.event_im.connect(partial(self.storeData,'current_image'))
-        self.event_im.connect(partial(self.storeData,'lattice_image'))
+        remove_slot(self.event_im,partial(self.connectSelf,'current_image'))
+        remove_slot(self.event_im,partial(self.connectSelf,'lattice_image'))
+
+        # self.event_im.connect(partial(self.connectSelf,'current_image'))
+        # self.event_im.connect(partial(self.connectSelf,'lattice_image'))
         # self.truthlist = np.load(self.image_path[:-8]+"truthandlattice.npy")
        
 
@@ -272,9 +266,6 @@ class main_window(QMainWindow):
         self.angle_max_edit.setValidator(double_validator)
         self.angle_step_edit = QLineEdit("3000")
         self.angle_step_edit.setValidator(int_validator)
-
-        # self.loadbyid_edit = QLineEdit("id??")
-        # self.loadbyid_edit.returnPressed.connect(self.load_from_db) #TODO db
 
         self.manual_angle = QLineEdit("Angle?")
         self.manual_offset = QLineEdit("offset")
@@ -660,7 +651,7 @@ class main_window(QMainWindow):
         self.status_bar.showMessage("Finding blobs...")
         self.status_bar.repaint()
         blobworker = Worker(ai.find_blobs,self.lattice_image)
-        blobworker.signals.result.connect(partial(self.storeData,'blobs'))
+        blobworker.signals.result.connect(partial(self.connectSelf,'blobs'))
         blobworker.signals.finished.connect(self.show_blobs)
         self.threadpool.start(blobworker) 
     def show_blobs(self):
@@ -687,7 +678,7 @@ class main_window(QMainWindow):
         self.status_bar.showMessage("Finding Lattice angles...")
         self.status_bar.repaint()
         worker  = Worker(ai.find_lattice_vectors_new,self.blobs,float(self.angle_min_edit.text()),float(self.angle_max_edit.text()),int(self.angle_step_edit.text()))#,Plot = self.full_plots_checkbox.isChecked())
-        worker.signals.result.connect(partial(self.storeData,'lattice_vectors'))
+        worker.signals.result.connect(partial(self.connectSelf,'lattice_vectors'))
         worker.signals.result.connect(self.show_lattice_vectors)
         self.threadpool.start(worker)
     def show_lattice_vectors(self):
@@ -702,7 +693,7 @@ class main_window(QMainWindow):
         self.status_bar.showMessage("Finding Lattice Phase...")
         self.status_bar.repaint()
         worker = Worker(ai.find_offset,self.current_image,self.blobs,self.lattice_vectors)
-        worker.signals.result.connect(partial(self.storeData,'offset'))
+        worker.signals.result.connect(partial(self.connectSelf,'offset'))
         worker.signals.finished.connect(self.show_offset)
         self.threadpool.start(worker)
     def manual_lattice(self):
@@ -755,7 +746,7 @@ class main_window(QMainWindow):
         self.RLiterations = int(self.rliterations_edit.text())
         print("Devonvolving {} iterations".format(self.RLiterations))
         worker = Worker(self.deconvolve,self.current_image,self.RLiterations)
-        worker.signals.result.connect(partial(self.storeData,'deconvolved'))
+        worker.signals.result.connect(partial(self.connectSelf,'deconvolved'))
         worker.signals.finished.connect(self.show_deconvolved)
         self.threadpool.start(worker) 
     def show_deconvolved(self):
@@ -825,11 +816,11 @@ class main_window(QMainWindow):
 
 
 
-    def storeData(self,variable,result):
-        """ use setattr to assign the result of a signal to a self variable
-            use as signal.connect(partial(self.storeData),'variablename') 
+    def connectSelf(self,variable,signal):
+        """ use setattr to assign a signal to a self variable
+            use as signal.connect(partial(self.connectSelf),'variablename') 
         """
-        setattr(self,variable,result)
+        setattr(self,variable,signal)
     def reset_name(self, text=''):
         """Take a new name for the window, display it in the window title."""
         self.name = self.name_edit.text()

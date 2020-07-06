@@ -264,7 +264,7 @@ def find_blobs(image,Plot = False):
                 try:
                         
                         # R  = np.sqrt((meshx-x)**2+(meshy-y)**2)
-                        radial = blobimage[(R>= 4-0.5)&(R>= 4+0.5)] #TODO check this!! seems to be wrong logic
+                        radial = blobimage[(R>= 4-0.5)&(R>= 4+0.5)] 
                         std = radial.std()
                         diff = (np.max(blobimage)-radial.max())/np.max(blobimage)
                         #print(std,diff)
