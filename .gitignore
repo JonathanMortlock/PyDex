@@ -3,6 +3,8 @@
 imageanalysis/2020/
 __pycache__/
 .*/__pycache__/
+sequences/SequenceFiles/
+.vscode/
 
 # ignore the following files
 state
@@ -10,4 +12,4 @@ log.txt
 log.txt*
 *.pyc
 *.pyo
-.vscode/
+*.csv

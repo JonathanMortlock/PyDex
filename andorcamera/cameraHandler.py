@@ -53,7 +53,7 @@ class camera(QThread):
         self.initialised = 0 # check whether the camera functions were loaded 
         try: 
             self.AF = Andor() # functions for Andor camera
-            self.AF.verbosity = False  # Set True for debugging
+            self.AF.verbosity = True  # Set True for debugging
             self.AF.connected = False
             self.initialised  = 1 # functions loaded but camera not connected
             if self.AF.OS == "Windows" and self.AF.architecture == "64bit":

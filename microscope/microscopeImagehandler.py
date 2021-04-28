@@ -19,19 +19,25 @@ logger = logging.getLogger(__name__)
 
 
 class image_handler(Analysis):
-    """Placeholder based on Tweezer version."""
+    """Class to handle image metadata
+    (NB Slightly different implementation to Tweezers)
+    Inherits the types and stats dictionaries, and reset_arrays, 
+    load, and save methods from Analysis.    
+    """
     def __init__(self):
         super().__init__()
         self.types = OrderedDict([('File ID', int), # number ID of image
-            ('Counts', float), # integrated counts over the ROI
-            ('Atom detected', int), # compare counts with threshold value
-            ('ROI centre count', float), # count at the centre of the ROI
-            ('Max xpos', int), # horizontal positions of max pixel
-            ('Max ypos', int), # vertical positions of max pixel
-            ('Mean bg count', float), # mean counts outside ROI - estimate bg
-            ('Bg s.d.', float),# standard deviation outside of ROI
+            ('Atom Number', int), # Total occupied
+            ('Lattice 00',float),
+            ('Lattice 01',float),
+            ('Lattice 10',float),
+            ('Lattice 11',float),
+            ('Offset 0',float),
+            ('Offset 1',float),
+            ('RL iterations',int),
+            ('Threshold',float),
             ('Include', BOOL)])# whether to include in further analysis
-        self.stats = OrderedDict([(key, []) for key in self.types.keys()]) # standard deviation of counts outside ROI
+        self.stats = OrderedDict([(key, []) for key in self.types.keys()]) 
         
         self.delim = ' '                # delimieter to use when opening image files
         self.bias = 697                 # bias offset from EMCCD
@@ -51,4 +57,4 @@ class image_handler(Analysis):
         self.fid       = 0              # file ID number for the next image
         self.ind       = 0              # number of images processed
         self.im_vals   = np.array([])   # the data from the last image is accessible to an image_handler instance
-        self.bin_array = [] s            # if bins for the histogram are supplied, plotting can be faster
+        self.bin_array = []        # if bins for the histogram are supplied, plotting can be faster
