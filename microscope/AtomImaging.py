@@ -237,18 +237,21 @@ def bin_lattice(image, latticesites, latticevectors):
 
 
 
-def find_blobs(image,Plot = False):
+def find_blobs(image,min_sigma =3, max_sigma = 6, num_sigma = 3, threshold = 0.9,radial_thresh = 0.5, overlap = 0.5,Plot = False):
     """
         Detects blobs in an image file using blob_log, then filters according to height and circularity via a guassian fit. 
-
-        Plots the remaining blobs for a visual inspection. 
+        Hyper paramters: min,max sigma: bounds on blob_log
+                        threshold The absolute lower bound for scale space maxima. Local maxima smaller than thresh are ignored. Reduce this to detect blobs with less intensities
+                        overlap A value between 0 and 1. If the area of two blobs overlaps by a fraction greater than threshold, the smaller blob is eliminated.A value between 0 and 1. If the area of two blobs overlaps by a fraction greater than threshold, the smaller blob is eliminated.
+                        
+        Plot: Plots the remaining blobs for a visual inspection. 
     """
     if isinstance(image,str):
         image = np.load(image)
     windowsize = 7
     print("looking for blobs")
-    blobs = feature.blob_log(image,min_sigma = 3, max_sigma= 6, num_sigma=3,threshold=0.9,overlap = 0.5)
-    print("blobs found")
+    blobs = feature.blob_log(image,min_sigma = min_sigma, max_sigma= max_sigma, num_sigma=num_sigma,threshold=threshold,overlap = 0.5)
+    print(len(blobs),"blobs found")
 
     atoms = []
     meshx,meshy = np.meshgrid(np.arange(windowsize*2),np.arange(windowsize*2))
@@ -264,13 +267,13 @@ def find_blobs(image,Plot = False):
                 try:
                         
                         # R  = np.sqrt((meshx-x)**2+(meshy-y)**2)
-                        radial = blobimage[(R>= 4-0.5)&(R>= 4+0.5)] #TODO check this!! seems to be wrong logic
+                        radial = blobimage[(R>= 4-0.5)&(R>= 4+0.5)] 
                         std = radial.std()
                         diff = (np.max(blobimage)-radial.max())/np.max(blobimage)
                         #print(std,diff)
                         #print(x,y)
                         #print(fit[1],fit[2])
-                        if diff>0.5: #Filter oblong blobs TODO this seems very image dependant...
+                        if diff>radial_thresh: #Filter oblong blobs TODO this seems very image dependant...
                             atoms.append((x,y))
                             # fit, err = imu.fit2D(blobimage,imu.gaussian2D)
                             
@@ -293,7 +296,7 @@ def find_blobs(image,Plot = False):
 
     return atoms
 
-def find_lattice_vectors_new(atoms,min_angle,max_angle,steps,spacing_bounds = (3,5),Plot = False):
+def find_lattice_vectors_new(atoms,min_angle,max_angle,steps,axes = None,spacing_bounds = (3,5),Plot = False):
     """ Search angles while allowing for some variation in lattice spacing over set bounds
         For reliablity use a bruteforce search method.    
     """ 
@@ -316,11 +319,12 @@ def find_lattice_vectors_new(atoms,min_angle,max_angle,steps,spacing_bounds = (3
     best2 = secondangles[np.argmax(np.array(secondqualities))]
     spacing2 = angle_quality_free_spacing(best2,atoms,ReturnSpacing=True)
 
-    if Plot:
-        plt.figure()
-        plt.plot(firstangles,qualities,color = "purple")
-        plt.xlabel("Angle/Radian")
-        plt.ylabel("Integrated FFT peak")
+    if axes:
+        axes.cla()
+       
+        axes.plot(firstangles,qualities,color = "purple")
+        axes.set_xlabel("Angle/Radian")
+        axes.set_ylabel("Integrated FFT peak")
         # plt.axvline(best1,color = "red",ls = "--")
         #plt.show()
     latticevectors = np.array(((np.cos(best1)*spacing1,np.sin(best1)*spacing1),(np.cos(best2)*spacing2,np.sin(best2)*spacing2)))

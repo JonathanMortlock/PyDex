@@ -142,7 +142,7 @@ class Master(QMainWindow):
                     im_store_path=sv_dirs['Image Storage Path: ']), # image analysis
                 atom_window(last_im_path=sv_dirs['Image Storage Path: ']), # check if atoms are in ROIs to trigger experiment
                 Previewer(), # sequence editor
-                n=startn, m=2, k=0) 
+                n=startn, m=1, k=0) 
         # now the signals are connected, send camera settings to image analysis
         if self.rn.cam.initialised > 2:
             check = self.rn.cam.ApplySettingsFromConfig(self.stats['CameraConfig'])

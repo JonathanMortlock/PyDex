@@ -22,7 +22,7 @@ def homemadeAiry(height,center_x,center_y,radius,c):
     center_y = float(center_y)
     return lambda x,y: height* ((2*jn(1,np.sqrt(((x-center_x)**2+(y-center_y)**2))*Airyparam/radius)/(0.0001+np.sqrt(((x-center_x)**2+(y-center_y)**2))*Airyparam/radius)))**2+c
 def homemadeAirydecoupled(height,center_x,center_y,radiusx,radiusy,c):
-    """Homemade airy function. #TODO Pls check!!"""
+    """Homemade airy function."""
     Airyparam = np.pi*1.2196
     center_x = float(center_x)
     center_y = float(center_y)
@@ -175,8 +175,7 @@ def fit1D(data,model):
     fit, pcov  = optimize.curve_fit(model,xpoints,data,p0 = (100,170,10))
     errs = np.sqrt(np.diag(pcov))
     return fit,errs
-def GetMagnification(loc1,loc2,image1,image2):
-    pass #TODO use this as a wrapper 
+
 def match_row(array,row):
     """
         Match rows of a 2D array based on norm. 

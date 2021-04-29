@@ -42,7 +42,7 @@ ReadNoise   = np.array([14.5, 17.5, 16.33, 7.18, 8.45, 11.46, 4.01, 5.56, 8.69, 
 class Andor:
     """Class containing a library of functions for operating the Andor camera."""
     
-    def __init__(self, dllpath="Z:\\Tweezer\\Code\\Python 3.5\\PyDex\\andorcamera\\atmcd64d"):
+    def __init__(self, dllpath="Z:\\vfuser01-labs\\Tweezer\\Code\\Python 3.5\\PyDex\\andorcamera\\atmcd64d.dll"):
         super().__init__() # required for multiple inheritence
         self.OS = platform.system()
         self.architecture = platform.architecture()[0]

@@ -9,11 +9,13 @@ matplotlib.rc('font',family ='serif')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT as NavigationToolbar
 import pyqtgraph as pg    # not as flexible as matplotlib but works a lot better with qt
 
+import logging
+logger = logging.getLogger(__name__)
 
 sys.path.append('.')
 sys.path.append('..')
 import microscope.AtomImaging as ai
-
+import microscope.microscopeImagehandler as ih
 from matplotlib.figure import Figure
 from skimage import restoration, util, filters
 from PyQt5.QtGui import *
@@ -22,15 +24,6 @@ from PyQt5.QtCore import *
 from functools import  partial
 import time
 import traceback, sys
-#TODO database support
-# from pymongo import MongoClient, DESCENDING
-
-# from bson.binary import Binary
-# from bson.objectid import ObjectId
-
-# client = MongoClient('localhost',27017)
-# db = client.AtomAnalysis
-# imgs = db.images1
 
 # validators for user input
 double_validator = QDoubleValidator() # floats
@@ -38,7 +31,7 @@ int_validator    = QIntValidator()    # integers
 int_validator.setBottom(0) # don't allow -ve numbers
 nat_validator    = QIntValidator()    # natural numbers 
 nat_validator.setBottom(1) # > 0
-def remove_slot(signal, slot, reconnect=True): #TODO This seems wrong to me, can I think of a way to replace?
+def connect_remove_slot(signal, slot, reconnect=True): #TODO This seems wrong to me, can I think of a way to replace?
     """Make sure all instances of slot are disconnected
     from signal. Prevents multiple connections to the same 
     slot. If reconnect=True, then reconnect slot to signal."""
@@ -150,7 +143,9 @@ class main_window(QMainWindow):
     def __init__(self,results_path='.', im_store_path='.', name='',
                 im_handler=None, hist_handler=None, edit_ROI=False):
         super().__init__()
-        self.name = name  # name is displayed in the window title
+        self.name = name  # name is displayed in  the window title
+        self.image_handler = im_handler if im_handler else ih.image_handler() 
+        
         self.multirun = ''
         self.date = time.strftime("%d %b %B %Y", time.localtime()).split(" ") # day short_month long_month year
         self.log_file_name = results_path + 'log.dat' # in case init_log fails
@@ -159,9 +154,15 @@ class main_window(QMainWindow):
         self.image_storage_path = im_store_path # used for loading image files
         #TODO wrap this in a "testing"
         self.image_path  = r"C:\Users\Jonathan\Documents\PhD\Experiment\MicroscopeAnalysis\AtomTestImages\MIwithsparse2data.npy"
-        self.current_image = np.load(self.image_path)
-        self.truthlist = np.load(self.image_path[:-8]+"truthandlattice.npy")
-        self.lattice_image = np.load(self.image_path)
+        self.current_image = np.zeros((512,512))
+        self.lattice_image = np.ones((512,512))
+        # connect_remove_slot(self.event_im,partial(self.connectSelf,'current_image'))
+        # connect_remove_slot(self.event_im,partial(self.connectSelf,'lattice_image'))
+
+        self.event_im.connect(self.update_plot)
+        # self.event_im.connect(partial(self.connectSelf,'lattice_image'))
+        # self.truthlist = np.load(self.image_path[:-8]+"truthandlattice.npy")
+       
 
         self.threadpool = QThreadPool()
 
@@ -187,7 +188,7 @@ class main_window(QMainWindow):
         self.updated = {'current_image': False,'blobs': False,'lattice_vectors': False,'lattice': False, 'deconvolved': False,'histogram': False}
         self.init_UI(edit_ROI)
         self.set_im_show(True)
-        self.event_im.emit(self.current_image,True)
+        # self.event_im.emit(self.current_image,True)
     def init_log(self, results_path='.'):
         """Create a directory for today's date as a subdirectory in the log file path
         then write the header to the log file path defined in config.dat"""
@@ -241,9 +242,11 @@ class main_window(QMainWindow):
         load_im.triggered.connect(self.load_image_from_file)
         set_lattice_image= QAction('Set lattice image ',self)
         set_lattice_image.triggered.connect(self.set_lattice_file)
-
+        save_data = QAction('Save Analysis',self)
+        save_data.triggered.connect(self.savedata_prompt)
         file_menu.addAction(load_im)
         file_menu.addAction(set_lattice_image)
+        file_menu.addAction(save_data)
 
 
         """ 
@@ -261,15 +264,12 @@ class main_window(QMainWindow):
         self.use_lattice_file_checkbox = QCheckBox("Use Lattice Image?")
         self.full_plots_checkbox = QCheckBox("Full Plots?")
         angle_label = QLabel("Lattice angle search Range")
-        self.angle_min_edit = QLineEdit("0")
+        self.angle_min_edit = QLineEdit("0.76")
         self.angle_min_edit.setValidator(double_validator)
-        self.angle_max_edit = QLineEdit("1.5707")
+        self.angle_max_edit = QLineEdit("0.79")
         self.angle_max_edit.setValidator(double_validator)
-        self.angle_step_edit = QLineEdit("3000")
+        self.angle_step_edit = QLineEdit("300")
         self.angle_step_edit.setValidator(int_validator)
-
-        # self.loadbyid_edit = QLineEdit("id??")
-        # self.loadbyid_edit.returnPressed.connect(self.load_from_db) #TODO db
 
         self.manual_angle = QLineEdit("Angle?")
         self.manual_offset = QLineEdit("offset")
@@ -279,7 +279,13 @@ class main_window(QMainWindow):
         self.manual_psf_edit = QLineEdit("manual psf")
         self.manual_psf_edit.returnPressed.connect(self.manual_psf)
         # self.auto_process= self.auto_checkbox.isChecked()
-        ### Grid layout
+        # EMCCD bias offset
+        bias_offset_label = QLabel('EMCCD bias offset: ', self)
+        self.bias_offset_edit = QLineEdit(self)
+        self.bias_offset_edit.setText(str(0)) # default
+        self.bias_offset_edit.editingFinished.connect(self.CCD_stat_edit)
+        self.bias_offset_edit.setValidator(int_validator) # only ints
+
         settings_grid.addWidget(self.auto_checkbox,0,0)
         settings_grid.addWidget(QLabel("Image File path"),1,0)
         settings_grid.addWidget(self.file_path_label,1,1)
@@ -295,11 +301,14 @@ class main_window(QMainWindow):
         settings_grid.addWidget(self.manual_angle,6,0)
         settings_grid.addWidget(self.manual_offset,6,1)
         settings_grid.addWidget(self.manual_offset1,6,2)
+        
         settings_grid.addWidget(self.manual_psf_edit,7,0)
+        # settings_grid.addWidget(self.bias_offset_edit, 5,1, 1,1)
+        # settings_grid.addWidget(bias_offset_label, 5,0, 1,1)
 
         self.tabs.addTab(settings_tab, "Settings")
         
-
+        
 
 
         ###  Lattice finding tab ### 
@@ -308,14 +317,14 @@ class main_window(QMainWindow):
         lattice_tab.setLayout(lattice_grid)
         self.tabs.addTab(lattice_tab,"Lattice Determination")
 
-        # self.fftcanvas = MplCanvas(self)
-        # ffttoolbar = NavigationToolbar(self.fftcanvas, self)
-        # self.fftcanvas.axes.text(0.5,0.5,"FFT Shown here",fontsize = 20)
+        self.fftcanvas = MplCanvas(self)
+        ffttoolbar = NavigationToolbar(self.fftcanvas, self)
+        self.fftcanvas.axes.text(0.5,0.5,"FFT Shown here",fontsize = 20)
 
 
         self.blobcanvas = MplCanvas(self)
         blobtoolbar =  NavigationToolbar(self.blobcanvas, self)  
-        self.blobcanvas.axes.text(0.5,0.5,"Blobz shown here",fontsize=20)
+        self.blobcanvas.axes.text(0.5,0.5,"Blobs shown here",fontsize=20)
 
         self.update_blobs_button = QPushButton("Find Blobs")
         self.update_blobs_button.clicked.connect(self.find_blobs)
@@ -326,14 +335,36 @@ class main_window(QMainWindow):
         self.find_offset_button = QPushButton("Find offset")
         self.find_offset_button.clicked.connect(self.find_offset)
 
+        
+        self.min_sigma_edit = QLineEdit("3")
+        self.min_sigma_edit.setValidator(double_validator)
+        self.max_sigma_edit = QLineEdit("6")
+        self.max_sigma_edit.setValidator(double_validator)
+        self.num_sigma_edit = QLineEdit("3")
+        self.num_sigma_edit.setValidator(int_validator)
+        self.blobthreshold_edit = QLineEdit("0.9")
+        self.blobthreshold_edit.setValidator(double_validator)
+        self.blobradialedit = QLineEdit("0.5")
+        self.blobradialedit.setValidator(double_validator)
+    
         lattice_grid.addWidget(blobtoolbar,0,0,1,3)
         lattice_grid.addWidget(self.blobcanvas,1,0,1,3)
-        # lattice_grid.addWidget(ffttoolbar,2,0)
-        # lattice_grid.addWidget(self.fftcanvas,3,0)
+        lattice_grid.addWidget(ffttoolbar,0,4,1,3)
+        lattice_grid.addWidget(self.fftcanvas,1,4,1,3)
         lattice_grid.addWidget(self.update_blobs_button,2,0)
         lattice_grid.addWidget(self.find_lattice_vector_button,2,1)
         lattice_grid.addWidget(self.find_offset_button,2,2)
+        lattice_grid.addWidget(QLabel("min sigma"),3,0)
+        lattice_grid.addWidget(QLabel("max sigma"),3,1)
+        lattice_grid.addWidget(QLabel("num sigma"),3,2)
+        lattice_grid.addWidget(QLabel("Blob threshold"),3,3)
+        lattice_grid.addWidget(QLabel("Radial threshold"),3,4)
 
+        lattice_grid.addWidget(self.min_sigma_edit,4,0)
+        lattice_grid.addWidget(self.max_sigma_edit,4,1)
+        lattice_grid.addWidget(self.num_sigma_edit,4,2)
+        lattice_grid.addWidget(self.blobthreshold_edit,4,3)
+        lattice_grid.addWidget(self.blobradialedit,4,4)
         ### Deconvolved Tab ###
         self.deconvolved_canvas = MplCanvas(self, width=5, height=4, dpi=100)
         #self.find_deconvolved(self.deconvolved_canvas)
@@ -357,7 +388,7 @@ class main_window(QMainWindow):
         self.rliterations_edit.setValidator(int_validator)
         deconvolved_layout.addWidget(self.rliterations_edit,2,1,1,1)
 
-        #Histogram Tab##
+        ##Histogram Tab##
         histogram_tab = QWidget()
         histogram_grid = QGridLayout()
         histogram_tab.setLayout(histogram_grid)
@@ -380,157 +411,169 @@ class main_window(QMainWindow):
         histogram_grid.addWidget(threshold_label,3,0)
         histogram_grid.addWidget(self.threshold_edit,3,1)
 
-                ### Settings Tab
+    
 
-        image_settings_tab = QWidget()
-        image_settings_grid = QGridLayout()
-        image_settings_tab.setLayout(image_settings_grid)
-        self.tabs.addTab(image_settings_tab, "image Settings")
+        # ### Settings Tab
 
-        # allow user to change window name
-        name_label = QLabel('Window name: ', self)
-        image_settings_grid.addWidget(name_label, 0,0, 1,1)
-        self.name_edit = QLineEdit(self)
-        image_settings_grid.addWidget(self.name_edit, 0,1, 1,1)
-        self.name_edit.setText(self.name) # default
-        self.name_edit.textChanged[str].connect(self.reset_name)
+        # image_settings_tab = QWidget()
+        # image_settings_grid = QGridLayout()
+        # image_settings_tab.setLayout(image_settings_grid)
+        # self.tabs.addTab(image_settings_tab, "image Settings")
 
-        # get user to set the image size in pixels
-        # get user to set the image size in pixels
-        # self.pic_width_edit = QLineEdit(self)
-        # self.pic_height_edit = QLineEdit(self)
-        # for i, label in enumerate([['Image width: ', self.pic_width_edit, 512], 
-        #         ['Image height', self.pic_height_edit, 512]]): #HARD CODED 512 for pic height #TODO
-        #     textlabel = QLabel(label[0], self)
-        #     image_settings_grid.addWidget(textlabel, 1,2*i, 1,1)
-        #     image_settings_grid.addWidget(label[1], 1,2*i+1, 1,1)
-        #     label[1].setText(str(label[2])) # default
-        #     label[1].textChanged.connect(self.pic_size_text_edit)
-        #     label[1].setValidator(nat_validator)
+        # # allow user to change window name
+        # name_label = QLabel('Window name: ', self)
+        # image_settings_grid.addWidget(name_label, 0,0, 1,1)
+        # self.name_edit = QLineEdit(self)
+        # image_settings_grid.addWidget(self.name_edit, 0,1, 1,1)
+        # self.name_edit.setText(self.name) # default
+        # self.name_edit.textChanged[str].connect(self.reset_name)
 
-        # get image size from loading an image
-        # load_im_size = QPushButton('Load size from image', self)
-        # load_im_size.clicked.connect(self.load_im_size) # load image size from image
-        # load_im_size.resize(load_im_size.sizeHint())
-        # image_settings_grid.addWidget(load_im_size, 1,2, 1,1)
+        # # get user to set the image size in pixels
+        # # get user to set the image size in pixels
+        # # self.pic_width_edit = QLineEdit(self)
+        # # self.pic_height_edit = QLineEdit(self)
+        # # for i, label in enumerate([['Image width: ', self.pic_width_edit, 512], 
+        # #         ['Image height', self.pic_height_edit, 512]]): #HARD CODED 512 for pic height #TODO
+        # #     textlabel = QLabel(label[0], self)
+        # #     image_settings_grid.addWidget(textlabel, 1,2*i, 1,1)
+        # #     image_settings_grid.addWidget(label[1], 1,2*i+1, 1,1)
+        # #     label[1].setText(str(label[2])) # default
+        # #     label[1].textChanged.connect(self.pic_size_text_edit)
+        # #     label[1].setValidator(nat_validator)
 
-        # get user to set ROI:
-        # centre of ROI x position
-        roi_xc_label = QLabel('ROI x_c: ', self)
-        image_settings_grid.addWidget(roi_xc_label, 2,0, 1,1)
-        self.roi_x_edit = QLineEdit(self)
-        image_settings_grid.addWidget(self.roi_x_edit, 2,1, 1,1)
-        self.roi_x_edit.setText('1')  # default
-        self.roi_x_edit.textEdited[str].connect(self.roi_text_edit)
-        self.roi_x_edit.setValidator(int_validator) # only numbers
-        # whether or not the user can change this window's ROI
-        self.roi_x_edit.setEnabled(edit_ROI) 
+        # # get image size from loading an image
+        # # load_im_size = QPushButton('Load size from image', self)
+        # # load_im_size.clicked.connect(self.load_im_size) # load image size from image
+        # # load_im_size.resize(load_im_size.sizeHint())
+        # # image_settings_grid.addWidget(load_im_size, 1,2, 1,1)
+
+        # # get user to set ROI:
+        # # centre of ROI x position
+        # roi_xc_label = QLabel('ROI x_c: ', self)
+        # image_settings_grid.addWidget(roi_xc_label, 2,0, 1,1)
+        # self.roi_x_edit = QLineEdit(self)
+        # image_settings_grid.addWidget(self.roi_x_edit, 2,1, 1,1)
+        # self.roi_x_edit.setText('1')  # default
+        # self.roi_x_edit.textEdited[str].connect(self.roi_text_edit)
+        # self.roi_x_edit.setValidator(int_validator) # only numbers
+        # # whether or not the user can change this window's ROI
+        # self.roi_x_edit.setEnabled(edit_ROI) 
         
-        # centre of ROI y position
-        roi_yc_label = QLabel('ROI y_c: ', self)
-        image_settings_grid.addWidget(roi_yc_label, 2,2, 1,1)
-        self.roi_y_edit = QLineEdit(self)
-        image_settings_grid.addWidget(self.roi_y_edit, 2,3, 1,1)
-        self.roi_y_edit.setText('1')  # default
-        self.roi_y_edit.textEdited[str].connect(self.roi_text_edit)
-        self.roi_y_edit.setValidator(int_validator) # only numbers
-        self.roi_y_edit.setEnabled(edit_ROI)
+        # # centre of ROI y position
+        # roi_yc_label = QLabel('ROI y_c: ', self)
+        # image_settings_grid.addWidget(roi_yc_label, 2,2, 1,1)
+        # self.roi_y_edit = QLineEdit(self)
+        # image_settings_grid.addWidget(self.roi_y_edit, 2,3, 1,1)
+        # self.roi_y_edit.setText('1')  # default
+        # self.roi_y_edit.textEdited[str].connect(self.roi_text_edit)
+        # self.roi_y_edit.setValidator(int_validator) # only numbers
+        # self.roi_y_edit.setEnabled(edit_ROI)
         
-        # ROI size
-        roi_l_label = QLabel('ROI size: ', self)
-        image_settings_grid.addWidget(roi_l_label, 4,0, 1,1)
-        self.roi_l_edit = QLineEdit(self)
-        image_settings_grid.addWidget(self.roi_l_edit, 4,1, 1,1)
-        self.roi_l_edit.setText('1')  # default
-        self.roi_l_edit.textEdited[str].connect(self.roi_text_edit)
-        self.roi_l_edit.setValidator(nat_validator) # only numbers
-        self.roi_l_edit.setEnabled(edit_ROI)
-
-        # EMCCD bias offset
-        bias_offset_label = QLabel('EMCCD bias offset: ', self)
-        image_settings_grid.addWidget(bias_offset_label, 5,0, 1,1)
-        self.bias_offset_edit = QLineEdit(self)
-        image_settings_grid.addWidget(self.bias_offset_edit, 5,1, 1,1)
-        self.bias_offset_edit.setText(str(0)) # default
-        self.bias_offset_edit.editingFinished.connect(self.CCD_stat_edit)
-        self.bias_offset_edit.setValidator(int_validator) # only ints
-
-        # label to show last file analysed
-        self.recent_label = QLabel('', self)
-        image_settings_grid.addWidget(self.recent_label, 7,0, 1,4)
-        
-        #### tab for viewing images ####
-        im_tab = QWidget()
-        im_grid = QGridLayout()
-        im_tab.setLayout(im_grid)
-        self.tabs.addTab(im_tab, 'Image')
-        # display the pic size widgets on this tab as well
-        im_size_label = QLabel('Image Size in Pixels: ', self)
-        im_grid.addWidget(im_size_label, 0,0, 1,1)
-        self.pic_size_label = QLabel('', self)
-        im_grid.addWidget(self.pic_size_label, 0,1, 1,1)
-        self.pic_size_label.setText('(%s,%s)'%(512,512)) # default
-
-        # toggle to continuously plot images as they come in
-        self.im_show_toggle = QPushButton('Auto-display last image', self)
-        self.im_show_toggle.setCheckable(True)
-        self.im_show_toggle.clicked[bool].connect(self.set_im_show)
-        im_grid.addWidget(self.im_show_toggle, 0,2, 1,1)
-        
-        im_grid_pos = 0 # starting column. 
-        # centre of ROI x position
-        self.xc_label = QLabel('ROI x_c: 0', self)
-        im_grid.addWidget(self.xc_label, 7,im_grid_pos, 1,1)
-        
-        # centre of ROI y position
-        self.yc_label = QLabel('ROI y_c: 0', self)
-        im_grid.addWidget(self.yc_label, 7,im_grid_pos+2, 1,1)
-        
-        # ROI size
-        self.l_label = QLabel('ROI size: 1', self)
-        im_grid.addWidget(self.l_label, 7,im_grid_pos+4, 1,1)
-        
-        # display last image if toggle is True
-        im_widget = pg.GraphicsLayoutWidget() # containing widget
-        viewbox = im_widget.addViewBox() # plot area to display image
-        self.im_canvas = pg.ImageItem() # the image
-        viewbox.addItem(self.im_canvas)
-        im_grid.addWidget(im_widget, 1,im_grid_pos, 6,8)
-        # make an ROI that the user can drag
-        self.roi = pg.ROI([0,0], [1,1], movable=False) 
-        self.roi.sigRegionChangeFinished.connect(self.user_roi)
-        viewbox.addItem(self.roi)
-        self.roi.setZValue(10)   # make sure the ROI is drawn above the image
-        # make a histogram to control the intensity scaling
-        self.im_hist = pg.HistogramLUTItem()
-        self.im_hist.setImageItem(self.im_canvas)
-        im_widget.addItem(self.im_hist)
-        
-        # edits to allow the user to fix the intensity limits
-        vmin_label = QLabel('Min. intensity: ', self)
-        im_grid.addWidget(vmin_label, 8,im_grid_pos, 1,1)
-        self.vmin_edit = QLineEdit(self)
-        im_grid.addWidget(self.vmin_edit, 8,im_grid_pos+1, 1,1)
-        self.vmin_edit.setText('')  # default auto from image
-        self.vmin_edit.setValidator(int_validator) # only integers
-        vmax_label = QLabel('Max. intensity: ', self)
-        im_grid.addWidget(vmax_label, 8,im_grid_pos+2, 1,1)
-        self.vmax_edit = QLineEdit(self)
-        im_grid.addWidget(self.vmax_edit, 8,im_grid_pos+3, 1,1)
-        self.vmax_edit.setText('')  # default auto from image
-        self.vmax_edit.setValidator(int_validator) # only integers
+        # # ROI size
+        # roi_l_label = QLabel('ROI size: ', self)
+        # image_settings_grid.addWidget(roi_l_label, 4,0, 1,1)
+        # self.roi_l_edit = QLineEdit(self)
+        # image_settings_grid.addWidget(self.roi_l_edit, 4,1, 1,1)
+        # self.roi_l_edit.setText('1')  # default
+        # self.roi_l_edit.textEdited[str].connect(self.roi_text_edit)
+        # self.roi_l_edit.setValidator(nat_validator) # only numbers
+        # self.roi_l_edit.setEnabled(edit_ROI)
 
 
-
-        ### Dashboard Tab ###
-        dash_tab = QWidget()
-        dash_grid = QGridLayout()
-        dash_tab.setLayout(dash_grid)       
-        self.tabs.addTab(dash_tab,"Dashboard")
+        # # label to show last file analysed
+        # self.recent_label = QLabel('', self)
+        # image_settings_grid.addWidget(self.recent_label, 7,0, 1,4)
         
-        # dash_grid.addWidget(self.blobcanvas,0,0)
-        # dash_grid.addWidget(self.deconvolved_canvas,0,1)
-        # dash_grid.addWidget(self.histogram_canvas,1,0)
+        # #### tab for viewing images ####
+        # im_tab = QWidget()
+        # im_grid = QGridLayout()
+        # im_tab.setLayout(im_grid)
+        # self.tabs.addTab(im_tab, 'Image')
+        # # display the pic size widgets on this tab as well
+        # im_size_label = QLabel('Image Size in Pixels: ', self)
+        # im_grid.addWidget(im_size_label, 0,0, 1,1)
+        # self.pic_size_label = QLabel('', self)
+        # im_grid.addWidget(self.pic_size_label, 0,1, 1,1)
+        # self.pic_size_label.setText('(%s,%s)'%(512,512)) # default
+
+        # # toggle to continuously plot images as they come in
+        # self.im_show_toggle = QPushButton('Auto-display last image', self)
+        # self.im_show_toggle.setCheckable(True)
+        # self.im_show_toggle.clicked[bool].connect(self.set_im_show)
+        # im_grid.addWidget(self.im_show_toggle, 0,2, 1,1)
+        
+        # im_grid_pos = 0 # starting column. 
+        # # centre of ROI x position
+        # self.xc_label = QLabel('ROI x_c: 0', self)
+        # im_grid.addWidget(self.xc_label, 7,im_grid_pos, 1,1)
+        
+        # # centre of ROI y position
+        # self.yc_label = QLabel('ROI y_c: 0', self)
+        # im_grid.addWidget(self.yc_label, 7,im_grid_pos+2, 1,1)
+        
+        # # ROI size
+        # self.l_label = QLabel('ROI size: 1', self)
+        # im_grid.addWidget(self.l_label, 7,im_grid_pos+4, 1,1)
+        
+        # # display last image if toggle is True
+        # im_widget = pg.GraphicsLayoutWidget() # containing widget
+        # viewbox = im_widget.addViewBox() # plot area to display image
+        # self.im_canvas = pg.ImageItem() # the image
+        # # # Set colormap for pg plot
+        # # colormap = matplotlib.cm.get_cmap("inferno")  # cm.get_cmap("CMRmap")
+        # # colormap._init()
+        # # lut = (colormap._lut * 255).view(np.ndarray)  # Convert matplotlib colormap from 0-1 to 0 -255 for Qt
+        # # # Apply the colormap
+        # # self.im_canvas.setLookupTable(lut)
+
+        # viewbox.addItem(self.im_canvas)
+        # im_grid.addWidget(im_widget, 1,im_grid_pos, 6,8)
+        # # make an ROI that the user can drag
+        # self.roi = pg.ROI([0,0], [1,1], movable=False) 
+        # self.roi.sigRegionChangeFinished.connect(self.user_roi)
+        # viewbox.addItem(self.roi)
+        # self.roi.setZValue(10)   # make sure the ROI is drawn above the image
+        # # make a histogram to control the intensity scaling
+        # self.im_hist = pg.HistogramLUTItem()
+        # self.im_hist.setImageItem(self.im_canvas)
+        # im_widget.addItem(self.im_hist)
+        
+        # # edits to allow the user to fix the intensity limits
+        # vmin_label = QLabel('Min. intensity: ', self)
+        # im_grid.addWidget(vmin_label, 8,im_grid_pos, 1,1)
+        # self.vmin_edit = QLineEdit(self)
+        # im_grid.addWidget(self.vmin_edit, 8,im_grid_pos+1, 1,1)
+        # self.vmin_edit.setText('')  # default auto from image
+        # self.vmin_edit.setValidator(int_validator) # only integers
+        # vmax_label = QLabel('Max. intensity: ', self)
+        # im_grid.addWidget(vmax_label, 8,im_grid_pos+2, 1,1)
+        # self.vmax_edit = QLineEdit(self)
+        # im_grid.addWidget(self.vmax_edit, 8,im_grid_pos+3, 1,1)
+        # self.vmax_edit.setText('')  # default auto from image
+        # self.vmax_edit.setValidator(int_validator) # only integers
+
+
+        ### Result Tab ##
+        result_tab = QWidget()
+        result_layout = QGridLayout()
+        result_tab.setLayout(result_layout)
+
+        self.result_canvas = MplCanvas()
+        result_toolbar = NavigationToolbar(self.result_canvas,self)
+
+        result_layout.addWidget(result_toolbar,0,0)
+        result_layout.addWidget(self.result_canvas,1,0)
+        
+        self.tabs.addTab(result_tab,"Result")
+        ### Dashboard Tab TBI ###
+        # dash_tab = QWidget()
+        # dash_grid = QGridLayout()
+        # dash_tab.setLayout(dash_grid)       
+        # self.tabs.addTab(dash_tab,"Dashboard")
+        
+        # # dash_grid.addWidget(self.blobcanvas,0,0)
+        # # dash_grid.addWidget(self.deconvolved_canvas,0,1)
+        # # dash_grid.addWidget(self.histogram_canvas,1,0)
 
 
         """
@@ -540,13 +583,6 @@ class main_window(QMainWindow):
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("Hi, welcome to the microscope gui")
 
-        # # Setup a timer to trigger the show_deconvolved by calling update_plot.
-        # self.timer = QTimer()
-        # self.timer.setInterval(100)
-        # self.timer.timeout.connect(self.find_deconvolved())
-        # self.timer.start()        
-
-
         self.setGeometry(100, 150, 850, 500)
         self.setWindowTitle(self.name+'Microscope Imaging')
         self.setWindowIcon(QIcon('molcules.png'))        
@@ -554,18 +590,39 @@ class main_window(QMainWindow):
         self.show()
     def set_im_show(self, toggle):
         """If the toggle is True, always update the widget with the last image."""
-        remove_slot(self.event_im, self.update_im, toggle)
+        connect_remove_slot(self.event_im, self.update_im, toggle)
     def update_im(self, im, include=True):
         """Receive the image array emitted from the event signal
         display the image in the image canvas.
         event_im: [image (np.ndarray), include? (bool)]"""
-        self.im_canvas.setImage(im)
-        vmin, vmax = np.min(im), np.max(im)
-        if self.vmin_edit.text():
-            vmin = int(self.vmin_edit.text())
-        if self.vmax_edit.text():
-            vmax = int(self.vmax_edit.text())
-        self.im_hist.setLevels(vmin, vmax)
+        #TODO !! 
+        #if self.lattice...
+        self.current_image = im
+        self.include = include
+
+        #if lattice
+        self.lattice_image = im
+        self.find_blobs()
+        
+
+        # self.im_canvas.setImage(im)
+        # vmin, vmax = np.min(im), np.max(im)
+        # if self.vmin_edit.text():
+        #     vmin = int(self.vmin_edit.text())
+        # if self.vmax_edit.text():
+        #     vmax = int(self.vmax_edit.text())
+        # self.im_hist.setLevels(vmin, vmax)
+
+    def update_plot(self,im,include = True):
+        """Receive image from slot and update plots 
+        """
+        # self.current_image = im
+        # self.include = include
+
+        # #if lattice
+        # self.lattice_image = im
+        # self.find_blobs()
+
     # def load_from_db(self):
     #     self.db_document = imgs.find_one({"_id":ObjectId(self.loadbyid_edit.text())})
     #     if type(self.db_document):
@@ -615,7 +672,7 @@ class main_window(QMainWindow):
             self.status_bar.showMessage("WARNING: path doesn't end in data.npy!")
             self.status_bar.repaint()
     def CCD_stat_edit(self, emg=1, pag=4.5, Nr=8.8, acq_change=False):
-        #TODO implement CCD loggging   
+        #TODO implement CCD logging   
         """Update the values used for the EMCCD bias offset and readout noise"""
         # if self.bias_offset_edit.text(): # check the label isn't empty
         #     self.image_handler.bias = int(self.bias_offset_edit.text())
@@ -643,8 +700,9 @@ class main_window(QMainWindow):
         print("Finding blobs...")
         self.status_bar.showMessage("Finding blobs...")
         self.status_bar.repaint()
-        blobworker = Worker(ai.find_blobs,self.lattice_image)
-        blobworker.signals.result.connect(partial(self.storeData,'blobs'))
+        blobworker = Worker(ai.find_blobs,self.lattice_image,float(self.min_sigma_edit.text()),float(self.max_sigma_edit.text()),int(self.num_sigma_edit.text()),float(self.blobthreshold_edit.text()),float(self.blobradialedit.text()))
+        print(float(self.min_sigma_edit.text()),float(self.max_sigma_edit.text()),int(self.num_sigma_edit.text()),float(self.blobthreshold_edit.text()),float(self.blobradialedit.text()))
+        blobworker.signals.result.connect(partial(self.connectSelf,'blobs'))
         blobworker.signals.finished.connect(self.show_blobs)
         self.threadpool.start(blobworker) 
     def show_blobs(self):
@@ -665,20 +723,22 @@ class main_window(QMainWindow):
         if self.auto_checkbox.isChecked():
             self.find_lattice_vectors()
     def find_lattice_vectors(self):
-        """
+        """Start a worker to find lattice vectors
         """
         print("Finding lattice...")
         self.status_bar.showMessage("Finding Lattice angles...")
         self.status_bar.repaint()
-        worker  = Worker(ai.find_lattice_vectors_new,self.blobs,float(self.angle_min_edit.text()),float(self.angle_max_edit.text()),int(self.angle_step_edit.text()))#,Plot = self.full_plots_checkbox.isChecked())
-        worker.signals.result.connect(partial(self.storeData,'lattice_vectors'))
+        worker  = Worker(ai.find_lattice_vectors_new,self.blobs,float(self.angle_min_edit.text()),float(self.angle_max_edit.text()),int(self.angle_step_edit.text()),self.fftcanvas.axes)#,Plot = self.full_plots_checkbox.isChecked())
+        worker.signals.result.connect(partial(self.connectSelf,'lattice_vectors'))
         worker.signals.result.connect(self.show_lattice_vectors)
         self.threadpool.start(worker)
     def show_lattice_vectors(self):
         self.updated['lattice_vectors'] = True
         self.status_bar.showMessage("Lattice vectors Found... See terminal")
         self.status_bar.repaint()
-        print(self.lattice_vectors)
+        self.fftcanvas.draw()
+
+        print(self.lattice_vectors.flatten())
         if self.auto_checkbox.isChecked():
             self.find_offset()
     def find_offset(self):
@@ -686,7 +746,7 @@ class main_window(QMainWindow):
         self.status_bar.showMessage("Finding Lattice Phase...")
         self.status_bar.repaint()
         worker = Worker(ai.find_offset,self.current_image,self.blobs,self.lattice_vectors)
-        worker.signals.result.connect(partial(self.storeData,'offset'))
+        worker.signals.result.connect(partial(self.connectSelf,'offset'))
         worker.signals.finished.connect(self.show_offset)
         self.threadpool.start(worker)
     def manual_lattice(self):
@@ -699,6 +759,7 @@ class main_window(QMainWindow):
 
     def show_offset(self):
         print("Offset",self.offset)
+
         self.updated['lattice'] = True
         self.status_bar.showMessage("Lattice offset found... See terminal")
         self.status_bar.repaint()
@@ -739,12 +800,13 @@ class main_window(QMainWindow):
         self.RLiterations = int(self.rliterations_edit.text())
         print("Devonvolving {} iterations".format(self.RLiterations))
         worker = Worker(self.deconvolve,self.current_image,self.RLiterations)
-        worker.signals.result.connect(partial(self.storeData,'deconvolved'))
+        worker.signals.result.connect(partial(self.connectSelf,'deconvolved'))
         worker.signals.finished.connect(self.show_deconvolved)
         self.threadpool.start(worker) 
     def show_deconvolved(self):
         self.updated['deconvolved'] = True
         self.deconvolved_canvas.axes.cla()
+
         #print(self.deconvolved)
         self.deconvolved_canvas.axes.imshow(self.deconvolved)
         self.deconvolved_canvas.draw()
@@ -752,11 +814,13 @@ class main_window(QMainWindow):
         if self.auto_checkbox.isChecked() and self.updated['lattice']== True:
             self.find_histogram()  
     def deconvolve(self,image,iterations):
+        ## Code for deconvolution
         psf = ai.airy_psf(self.window,self.psf_radius)
         image = np.pad(image,int(psf.shape[0]/2),mode= "reflect")
         deconvolved = restoration.richardson_lucy(image,psf,iterations,False)
         deconvolved = util.crop(deconvolved,int(psf.shape[0]/2))
-        return deconvolved        
+        return deconvolved    
+            
     #Microscope histogram Functions
     def find_histogram(self):
         self.status_bar.showMessage("Binning image...")
@@ -767,20 +831,23 @@ class main_window(QMainWindow):
         worker.signals.finished.connect(self.show_histogram)
         self.threadpool.start(worker)
     def storeHist(self,data):
-        "Specific function to store histogram data"
+        "Store data from hist_and_thresh function"
         self.updated['threshold'] = True
         self.histogram_data = data[0]
         self.threshold = data[1]
         self.threshold_edit.setText(str(self.threshold))
-        self.atoms = data[2]
+        self.atoms = data[2] #Boolean array 
         # print("atoms shape",self.atoms.shape)
     def set_threshold(self):
+        """Update plot based on manual threshold
+        """
         self.threshold = float(self.threshold_edit.text())
         self.atoms = (np.array(self.histogram_data)> self.threshold)
         self.show_histogram()
     def show_histogram(self):
         """Update histogram canvas. Slot for hist_and_thresh finished
         """
+
         self.status_bar.showMessage("Histogram Found")
         self.status_bar.repaint()
         canvas = self.histogram_canvas
@@ -794,9 +861,9 @@ class main_window(QMainWindow):
         self.result_canvas.axes.cla()
         self.result_canvas.axes.imshow(self.current_image)
         self.result_canvas.axes.scatter(self.lattice[:,0],self.lattice[:,1],s = 2,c = self.atoms,cmap = "Reds")
-
-        if self.auto_checkbox.isChecked():
-            self.find_fidelity()
+        self.savemetadata()
+        # if self.auto_checkbox.isChecked():
+        #     self.find_fidelity()
     
 
    
@@ -806,60 +873,121 @@ class main_window(QMainWindow):
         canvas.axes.imshow(im)
         canvas.draw()
     
-
-
-
-    def storeData(self,variable,result):
-        """ use setattr to assign the result of a signal to a self variable
-            use as signal.connect(partial(self.storeData),'variablename') 
+    def save_event(self):
+        """Create a time stamp to allow for saving data in a unique way which can be accessed later
         """
-        setattr(self,variable,result)
+        self.timestamp = time.strftime("%S%Y",time.localtime())
+        print(self.timestamp)
+
+    def savemetadata(self):
+        """Save meta data to appropriate place
+        """
+        self.image_handler.stats['File ID'].append(self.image_handler.fid)
+        lattice_vectorlist = self.lattice_vectors.flatten().tolist()
+        self.image_handler.stats['Lattice 00'].append(lattice_vectorlist[0])
+        self.image_handler.stats['Lattice 01'].append(lattice_vectorlist[1])
+        self.image_handler.stats['Lattice 10'].append(lattice_vectorlist[2])
+        self.image_handler.stats['Lattice 11'].append(lattice_vectorlist[3])        
+        offsetlist = self.offset.tolist()
+        self.image_handler.stats['Offset 0'].append(offsetlist[0])
+        self.image_handler.stats['Offset 1'].append(offsetlist[1]) 
+        self.image_handler.stats['RL iterations'].append(self.RLiterations)
+        self.image_handler.stats['Atom Number'].append(int(np.sum(self.atoms)))
+        self.image_handler.stats['Threshold'].append(self.threshold)
+        self.image_handler.stats['Include'].append(self.include)
+        print(self.image_handler.stats.items())
+        savepath = 'testsave.csv' #TODO sensible save path
+        self.image_handler.save(savepath)
+
+    def save_arrays(self):
+        """Save arrays to a folder speicific to the experimental run. Use time stamp to produce repeatable 
+        """
+
+
+    def savedata_prompt(self, trigger=None, save_file_name='', confirm=True):
+        """Prompt the user to give a directory to save the histogram data, then save"""
+        if not save_file_name:
+            save_file_name = self.try_browse(title='Save File', file_type='csv(*.csv);;all (*)', 
+                        open_func=QFileDialog.getSaveFileName)
+        if save_file_name:
+            # don't update the threshold  - trust the user to have already set it
+            self.add_stats_to_plot()
+            warnmsg = ''
+            if not all(self.image_handler.stats['Include']):
+                warnmsg = 'The user should check histogram ' + save_file_name + \
+                    '\nAnalysis has flagged image %s as potentially mislabelled'%(
+                        self.image_handler.stats['File ID'][next(i for i, x in enumerate(
+                            self.image_handler.stats['Include']) if not x)])
+                logger.warning(warnmsg)
+            # include most recent histogram stats as the top two lines of the header
+            self.image_handler.save(save_file_name,
+                         meta_head=list(self.histo_handler.temp_vals.keys()),
+                         meta_vals=map(str, self.histo_handler.temp_vals.values())) # save histogram
+            try: 
+                hist_num = self.histo_handler.stats['File ID'][-1]
+            except IndexError: # if there are no values in the stats yet
+                hist_num = -1
+            if confirm:
+                msg = QMessageBox()
+                msg.setIcon(QMessageBox.Information)
+                msg.setText("File saved to "+save_file_name+"\n"+
+                        "and appended histogram %s to log file.\n"%hist_num
+                        +warnmsg)
+                msg.setStandardButtons(QMessageBox.Ok)
+                msg.exec_()
+    
+    
+    def connectSelf(self,variable,signal):
+        """ use setattr to assign a signal to a self variable
+            use as signal.connect(partial(self.connectSelf),'variablename') 
+        """
+        setattr(self,variable,signal)
     def reset_name(self, text=''):
         """Take a new name for the window, display it in the window title."""
         self.name = self.name_edit.text()
         self.setWindowTitle(self.name+' - Microscope Processing -')
-    def roi_text_edit(self, text):
-        """Update the ROI position and size every time a text edit is made by
-        the user to one of the line edit widgets"""
-        xc, yc, l = [self.roi_x_edit.text(),
-                            self.roi_y_edit.text(), self.roi_l_edit.text()]
-        if any(v == '' for v in [xc, yc, l]):
-            xc, yc, l = 1, 1, 1 # default 
-        else:
-            xc, yc, l = list(map(int, [xc, yc, l])) # crashes if the user inputs float
+    # def roi_text_edit(self, text):
+    #     """Update the ROI position and size every time a text edit is made by
+    #     the user to one of the line edit widgets"""
+    #     xc, yc, l = [self.roi_x_edit.text(),
+    #                         self.roi_y_edit.text(), self.roi_l_edit.text()]
+    #     if any(v == '' for v in [xc, yc, l]):
+    #         xc, yc, l = 1, 1, 1 # default 
+    #     else:
+    #         xc, yc, l = list(map(int, [xc, yc, l])) # crashes if the user inputs float
             
-        if any(v > max(self.pic_width, self.pic_height) for v in [xc, yc, l]):
-            xc, yc, l = 1, 1, 1
+    #     if any(v > max(self.pic_width, self.pic_height) for v in [xc, yc, l]):
+    #         xc, yc, l = 1, 1, 1
         
-        if (xc - l//2 < 0 or yc - l//2 < 0 
-            or xc + l//2 > self.pic_width 
-            or yc + l//2 > self.pic_height):
-            l = 2*min([xc, yc])  # can't have the boundary go off the edge
-        if int(l) == 0:
-            l = 1 # can't have zero width
-        # self.image_handler.set_roi(dimensions=list(map(int, [xc, yc, l])))
-        self.xc_label.setText('ROI x_c = '+str(xc)) 
-        self.yc_label.setText('ROI y_c = '+str(yc))
-        self.l_label.setText('ROI size = '+str(l))
-        # update ROI on image canvas
-        # note: setting the origin as top left because image is inverted
-        self.roi.setPos(xc - l//2, yc - l//2)
-        self.roi.setSize((l, l))
+    #     if (xc - l//2 < 0 or yc - l//2 < 0 
+    #         or xc + l//2 > self.pic_width 
+    #         or yc + l//2 > self.pic_height):
+    #         l = 2*min([xc, yc])  # can't have the boundary go off the edge
+    #     if int(l) == 0:
+    #         l = 1 # can't have zero width
+    #     # self.image_handler.set_roi(dimensions=list(map(int, [xc, yc, l])))
+    #     self.xc_label.setText('ROI x_c = '+str(xc)) 
+    #     self.yc_label.setText('ROI y_c = '+str(yc))
+    #     self.l_label.setText('ROI size = '+str(l))
+    #     # update ROI on image canvas
+    #     # note: setting the origin as top left because image is inverted
+    #     self.roi.setPos(xc - l//2, yc - l//2)
+    #     self.roi.setSize((l, l))
 
-    def user_roi(self, pos):
-        """Update position of ROI"""
-        x0, y0 = self.roi.pos()  # lower left corner of bounding rectangle
-        xw, yw = self.roi.size() # widths
-        l = int(0.5*(xw+yw))  # want a square ROI
-        # note: setting the origin as bottom left but the image has origin top left
-        xc, yc = int(x0 + l//2), int(y0 + l//2)  # centre
-        # self.image_handler.set_roi(dimensions=[xc, yc, l])
-        self.xc_label.setText('ROI x_c = '+str(xc)) 
-        self.yc_label.setText('ROI y_c = '+str(yc))
-        self.l_label.setText('ROI size = '+str(l))
-        self.roi_x_edit.setText(str(xc))
-        self.roi_y_edit.setText(str(yc))
-        self.roi_l_edit.setText(str(l))
+    # def user_roi(self, pos):
+    #     """Update position of ROI"""
+    #     x0, y0 = self.roi.pos()  # lower left corner of bounding rectangle
+    #     xw, yw = self.roi.size() # widths
+    #     l = int(0.5*(xw+yw))  # want a square ROI
+    #     # note: setting the origin as bottom left but the image has origin top left
+    #     xc, yc = int(x0 + l//2), int(y0 + l//2)  # centre
+    #     # self.image_handler.set_roi(dimensions=[xc, yc, l])
+    #     self.xc_label.setText('ROI x_c = '+str(xc)) 
+    #     self.yc_label.setText('ROI y_c = '+str(yc))
+    #     self.l_label.setText('ROI size = '+str(l))
+    #     self.roi_x_edit.setText(str(xc))
+    #     self.roi_y_edit.setText(str(yc))
+    #     self.roi_l_edit.setText(str(l))
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
