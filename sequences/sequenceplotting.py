@@ -22,8 +22,12 @@ import time
 # font = {'family' : 'normal',
 #         'size'   : 12} 
 
-def sequence_to_dataframe(filepath,steprange = range(0,30),fastanalogues = [],slowanalogues = [],timeunits = "ms",alldata = True,annotate = True):
-    """Function to extract info from pydex xml files into a data frame
+def sequence_to_dataframe(filepath,alldata = True,steprange = None,fastanalogues = None,slowanalogues = [],timeunits = "ms",annotate = True):
+    """Function to extract info from pydex xml files into a data frame and save to csv
+        Only saves named channels
+        To select a specific range of channels use the keyword arguments to pass lists of integer indexes
+        steprange = [list of steps]
+
     """
     # PyDex module 
     t = translate()
@@ -32,8 +36,16 @@ def sequence_to_dataframe(filepath,steprange = range(0,30),fastanalogues = [],sl
     t.load_xml(filepath)
 
     esc = t.seq_dic['Experimental sequence cluster in'] # Sequence cluster (data)
-    print(len(esc['Sequence header top']))
-
+    print("Number of time steps",len(esc['Sequence header top']))
+    if alldata:
+        steprange = range(len(esc['Sequence header top']))
+        fastanalogues =  range(len(esc['Fast analogue array']))
+        slowanalogues =  range(len(esc['Slow analogue array']))
+        fastdigitals = range(len(esc['Fast digital channels']))
+        slowdigitals = range(len(esc['Slow digital channels']))
+    else:
+        fastdigitals= []
+        slowdigitals = []
     ### Catch input errors ###
     numsteps = len(esc['Sequence header top'])
     numfast = len(esc['Fast analogue array'])
@@ -48,15 +60,7 @@ def sequence_to_dataframe(filepath,steprange = range(0,30),fastanalogues = [],sl
         raise ValueError("Fast analogue out of range")
     if max(slowanalogues,default =0)>numslow:
         raise ValueError("Slow analogue out of range")
-    if alldata:
-        steprange = range(len(esc['Sequence header top']))
-        fastanalogues =  range(len(esc['Fast analogue array']))
-        slowanalogues =  range(len(esc['Slow analogue array']))
-        fastdigitals = range(len(esc['Fast digital channels']))
-        slowdigitals = range(len(esc['Slow digital channels']))
-    else:
-        fastdigitals= []
-        slowdigitals = []
+
     ### Time units ###
     if timeunits=="ms":
         time_conversions = [1e-3,1,1e-3]
@@ -92,7 +96,7 @@ def sequence_to_dataframe(filepath,steprange = range(0,30),fastanalogues = [],sl
             timebase.append(totaltime)
             names.append(header['Time step name']+" Start") #NB note that names is shorter than time based at this point
             names.append(header['Time step name']+" End")
-    names.append("last?")
+    names.append("last")
     print(len(timebase),len(names))
     df['time-'+str(timeunits)] = timebase
     df['names']  = names
@@ -129,7 +133,7 @@ def sequence_to_dataframe(filepath,steprange = range(0,30),fastanalogues = [],sl
             df["FAO "+str(channel)+": "+channelname] = voltages
         j += 1
     ###Slow analogues###
-    print("j at slow",j)
+    # print("j at slow",j)
     for channel in slowanalogues:
         oldvoltage= float(esc['Slow analogue array'][channel]['Voltage'][steprange[0]])
         #Set up arrays to store
@@ -234,6 +238,8 @@ def plot_sequence_from_df(dataframe):
 
 def sequence_plot(filepath,steprange = range(0,30),fastanalogues = [],slowanalogues = [],timeunits = "ms",annotate = True):
     """Function to plot sequences from pydex xml files
+        Having a function that plots from the xml directly may be useful for acessing some metadata?
+        but otherwise using sequence_to_dataframe and then plot_sequence_from_df
     """
     plt.rcParams.update({'font.size':8})
     # plt.style.use("tufte")
@@ -387,7 +393,7 @@ def sequence_plot(filepath,steprange = range(0,30),fastanalogues = [],slowanalog
 
 
 if __name__== "__main__":
-    path = r"C:\Users\jonat\Documents\PhD\Experiment\PyDex\sequences\SequenceFiles\BECSequence_200302.xml"
+    path = r"sequences\SequenceFiles\BECSequence_200302.xml"
     dataframe = sequence_to_dataframe(path,slowanalogues= [6,8,9,14],fastanalogues=[1,2],timeunits='s')
     plot_sequence_from_df("TestBEC.csv")
     # sequence_plot(path,slowanalogues= [6,8,9,14],fastanalogues=[1,2],timeunits='s')
